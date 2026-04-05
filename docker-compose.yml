@@ -1,0 +1,57 @@
+version: '3.8'
+
+services:
+  lg-therma-mqtt:
+    build:
+      context: .
+      network: host
+    container_name: lg-therma-mqtt
+    restart: unless-stopped
+    
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+    
+    environment:
+      # LG ThinQ Credentials
+      - LG_EMAIL=${LG_EMAIL}
+      - LG_PASSWORD=${LG_PASSWORD}
+      - LG_COUNTRY=${LG_COUNTRY:-DE}
+      - LG_LANGUAGE=${LG_LANGUAGE:-de-DE}
+      - DEVICE_ID=${DEVICE_ID}
+      
+      # MQTT Broker
+      - MQTT_BROKER=${MQTT_BROKER}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_USERNAME=${MQTT_USERNAME:-}
+      - MQTT_PASSWORD=${MQTT_PASSWORD:-}
+      - MQTT_TOPIC_PREFIX=${MQTT_TOPIC_PREFIX:-homeassistant}
+      
+      # Update interval in seconds
+      - INTERVAL=${INTERVAL:-30}
+    
+    volumes:
+      - ./logs:/app/logs:rw
+    user: "1000:1000"
+    
+    networks:
+      - backend
+    
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  backend:
+    driver: bridge
