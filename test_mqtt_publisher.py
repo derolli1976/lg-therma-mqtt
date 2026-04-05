@@ -101,10 +101,12 @@ SAMPLE_SNAPSHOT = {
 async def test_collect_data_mapping(publisher):
     device_info = MagicMock()
     device_info.isonline = True
-    device_info.as_dict.return_value = {"snapshot": SAMPLE_SNAPSHOT}
+
+    session_mock = MagicMock()
+    session_mock.get_device_v2_settings = AsyncMock(return_value={"snapshot": SAMPLE_SNAPSHOT})
 
     publisher.lg_client = MagicMock()
-    publisher.lg_client.refresh_devices = AsyncMock()
+    publisher.lg_client.session = session_mock
     publisher.lg_client.get_device.return_value = device_info
 
     data = await publisher.collect_data()
@@ -124,10 +126,12 @@ async def test_collect_data_mapping(publisher):
 async def test_cop_calculation(publisher):
     device_info = MagicMock()
     device_info.isonline = True
-    device_info.as_dict.return_value = {"snapshot": SAMPLE_SNAPSHOT}
+
+    session_mock = MagicMock()
+    session_mock.get_device_v2_settings = AsyncMock(return_value={"snapshot": SAMPLE_SNAPSHOT})
 
     publisher.lg_client = MagicMock()
-    publisher.lg_client.refresh_devices = AsyncMock()
+    publisher.lg_client.session = session_mock
     publisher.lg_client.get_device.return_value = device_info
 
     data = await publisher.collect_data()
@@ -142,10 +146,12 @@ async def test_cop_zero_when_no_power(publisher):
     snapshot = {**SAMPLE_SNAPSHOT, "airState.energy.onCurrent": 0}
     device_info = MagicMock()
     device_info.isonline = True
-    device_info.as_dict.return_value = {"snapshot": snapshot}
+
+    session_mock = MagicMock()
+    session_mock.get_device_v2_settings = AsyncMock(return_value={"snapshot": snapshot})
 
     publisher.lg_client = MagicMock()
-    publisher.lg_client.refresh_devices = AsyncMock()
+    publisher.lg_client.session = session_mock
     publisher.lg_client.get_device.return_value = device_info
 
     data = await publisher.collect_data()

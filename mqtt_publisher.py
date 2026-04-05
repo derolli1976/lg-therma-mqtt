@@ -441,26 +441,35 @@ class MQTTPublisher:
         return True
     
     async def collect_data(self) -> Optional[Dict[str, Any]]:
-        """Collect data from LG device"""
+        """Collect data from LG device via direct device query.
+        
+        Uses get_device_v2_settings() to fetch fresh data directly from
+        the device, instead of relying on cached dashboard data which
+        may be stale (the LG cloud only updates the dashboard cache
+        infrequently unless triggered by an app or direct query).
+        """
         try:
-            # IMPORTANT: Refresh devices to get latest data from LG servers
-            await self.lg_client.refresh_devices()
+            # Query device directly for fresh data (like the ThinQ app does)
+            result = await self.lg_client.session.get_device_v2_settings(self.device_id)
+            snapshot = result.get('snapshot', {})
             
-            # Get fresh device info after refresh
+            if not snapshot:
+                logger.warning("Direct device query returned empty snapshot, falling back to dashboard")
+                await self.lg_client.refresh_devices()
+                device_info = self.lg_client.get_device(self.device_id)
+                if not device_info:
+                    logger.error("Device not found")
+                    return None
+                snapshot = device_info.as_dict().get('snapshot', {})
+            
+            # Get online status from device list (dashboard data)
             device_info = self.lg_client.get_device(self.device_id)
-            if not device_info:
-                logger.error("Device not found")
-                return None
-            
-            # Get raw data and extract snapshot
-            # The actual sensor values are nested in 'snapshot'
-            raw_data = device_info.as_dict()
-            snapshot = raw_data.get('snapshot', {})
+            is_online = device_info.isonline if device_info else False
             
             # Extract all values from snapshot
             data = {
                 # System
-                "status": "Online" if device_info.isonline else "Offline",
+                "status": "Online" if is_online else "Offline",
                 "operation": snapshot.get("airState.operation", "UNKNOWN"),
                 "operation_mode": snapshot.get("airState.opMode", "UNKNOWN"),
                 "diag_code": snapshot.get("airState.diagCode", "0000"),
@@ -565,6 +574,13 @@ class MQTTPublisher:
                     # Check error threshold
                     if self.error_count >= self.max_errors:
                         logger.error(f"Too many errors ({self.error_count}), reconnecting...")
+                        
+                        # Close old session to prevent resource leaks
+                        if self.lg_client:
+                            try:
+                                await self.lg_client.close()
+                            except Exception:
+                                pass
                         
                         # Reconnect LG
                         await self.initialize_lg()
