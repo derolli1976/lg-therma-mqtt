@@ -10,7 +10,7 @@ Dieses Projekt wurde aus dem Monorepo **pyThermaV** (`e:\Github\pyThermaV`) hera
 
 ### Chronologie der bisherigen Arbeit
 
-1. **WideQ-Library adaptiert** – Die `wideq/` Library stammt aus dem Fork von [ollo69/ha-smartthinq-sensors](https://github.com/ollo69/ha-smartthinq-sensors). Sie wurde aus der HA-Integration extrahiert und eigenständig nutzbar gemacht (Login via `ClientAsync.from_user_login()`, Device-Abfrage, Snapshot-Abruf).
+1. **WideQ-Library adaptiert** – Die `wideq/` Library stammt aus dem Fork von [ollo69/ha-smartthinq-sensors](https://github.com/ollo69/ha-smartthinq-sensors). Sie wurde aus der HA-Integration extrahiert und eigenständig nutzbar gemacht (Login via `ClientAsync.from_user_login()`, Device-Abfrage, Snapshot-Abruf). Zusätzlich wurde die Library um Support für den **2. Heizkreis** und **ESS (Energy Storage System)** erweitert – siehe Abschnitt „WideQ-Library: Abweichungen vom Upstream".
 
 2. **WideQ-HA-Client** – `wideq_ha_client.py` wurde als Wrapper um die Library geschrieben, mit Token-Persistenz, Device-Listing und Snapshot-Export. Dient als CLI-Tool und als Basis für das Dashboard.
 
@@ -31,6 +31,29 @@ Dieses Projekt wurde aus dem Monorepo **pyThermaV** (`e:\Github\pyThermaV`) hera
 - `debug/` – Snapshots, State-Dumps, Config-Templates
 - `api_responses/` – Gespeicherte API-Antworten
 - Die MQTT-Dateien existieren dort noch (nicht gelöscht), können aber entfernt werden
+
+## WideQ-Library: Abweichungen vom Upstream
+
+Die `wideq/`-Library in diesem Repo ist **nicht identisch** mit dem Original von [ollo69/ha-smartthinq-sensors](https://github.com/ollo69/ha-smartthinq-sensors). Sie enthält eigene Erweiterungen, die als **PR [#916](https://github.com/ollo69/ha-smartthinq-sensors/pull/916)** upstream eingereicht, aber noch nicht gemergt wurden (Stand: April 2026).
+
+### Geänderte Dateien gegenüber Upstream
+
+| Datei | Änderungen |
+|---|---|
+| `wideq/const.py` | +6 `SECOND_CIRCUIT_*` Feature-Enums, +5 `ESS_*` Feature-Enums |
+| `wideq/devices/ac.py` | +10 State-Keys (2nd Circuit + ESS), +4 Command-Keys, +3 Control-Methoden (`set_second_circuit_onoff`, `set_second_circuit_op_mode`, `set_second_circuit_target_temp`), +12 Status-Properties (2nd Circuit + ESS) |
+
+### Neue Funktionalität
+
+- **2. Heizkreis**: Ein/Aus, Betriebsmodus, Zieltemperatur, aktuelle Temperatur, Vorlauf-Ausgang, Min/Max-Temperaturen, Air/Water-Modus
+- **ESS (Energy Storage System)**: Battery Remain, Battery Power, Solar Power, Grid Power, Consumed Power
+- **Control-Methoden**: Zweiten Heizkreis ein/ausschalten, Modus setzen (HEAT/COOL/AUTO), Zieltemperatur setzen (mit Bereichsvalidierung)
+
+### Upstream-Status
+
+- **PR**: [ollo69/ha-smartthinq-sensors#916](https://github.com/ollo69/ha-smartthinq-sensors/pull/916) – „Heat Pump: Add support for 2nd heating circuit"
+- **Status**: Open (eingereicht am 5. November 2025, keine Reaktion vom Maintainer)
+- **Risiko**: Bei zukünftigen Updates von ollo69 können Merge-Konflikte in `const.py` und `devices/ac.py` auftreten
 
 ## Architektur
 
@@ -113,12 +136,14 @@ airState.wCtrl              – Water Control
 
 ## Offene Punkte / Nächste Schritte
 
-- [ ] Git-Repo initialisieren und auf GitHub pushen
+- [x] Git-Repo initialisieren und auf GitHub pushen → [derolli1976/lg-therma-mqtt](https://github.com/derolli1976/lg-therma-mqtt)
+- [x] Unit Tests erstellen (12 Tests: Init, Sensoren, Daten-Mapping, MQTT Publish)
 - [ ] MQTT-Dateien aus pyThermaV-Repo entfernen (Cleanup)
 - [ ] Ggf. Energy-Sensoren erweitern (ESS/Solar-Daten wenn vorhanden)
 - [ ] Langzeit-Stabilität testen (Token-Refresh, Reconnect-Verhalten)
 - [ ] Ggf. MQTT Command-Support (Temperatur setzen, Silent Mode schalten)
 - [ ] Container auf Proxmox deployen und testen
+- [ ] Upstream-PR #916 verfolgen – bei Merge die lokale wideq-Kopie synchronisieren
 
 ## Konventionen
 

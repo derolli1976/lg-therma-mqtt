@@ -2,6 +2,8 @@
 
 Standalone MQTT Publisher für **LG Therma V** Wärmepumpen mit **Home Assistant Auto-Discovery**.
 
+> **Hinweis zur wideq-Library:** Die enthaltene `wideq/`-Library basiert auf [ollo69/ha-smartthinq-sensors](https://github.com/ollo69/ha-smartthinq-sensors) und wurde um Support für den 2. Heizkreis und ESS erweitert ([PR #916](https://github.com/ollo69/ha-smartthinq-sensors/pull/916), noch nicht upstream gemergt).
+
 Sammelt alle 30 Sekunden Daten von der LG Therma V Wärmepumpe über die LG ThinQ API und veröffentlicht sie via MQTT. Die Sensoren werden automatisch über MQTT Discovery erkannt und als eigenständiges Gerät mit 27 Sensoren in Home Assistant hinzugefügt.
 
 ## Quick Start
