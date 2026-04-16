@@ -30,9 +30,9 @@ RUN mkdir -p /app/logs && \
 # Switch to non-root user
 USER pytherma
 
-# Health check
+# Health check – python is PID 1, check /proc/1/cmdline
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD pgrep -f mqtt_publisher.py || exit 1
+    CMD python -c "open('/proc/1/cmdline','rb').read().find(b'mqtt_publisher')>=0 or exit(1)"
 
 # Run application (unbuffered output for logs)
 CMD ["python", "-u", "mqtt_publisher.py"]
