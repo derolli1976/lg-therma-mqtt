@@ -227,6 +227,8 @@ class MQTTPublisher:
                 "unique_id": f"{self.device_identifier}_operation_mode",
                 "state_topic": state_topic,
                 "value_template": "{{ value_json.operation_mode }}",
+                "device_class": "enum",
+                "options": ["COOL", "DRY", "FAN", "AUTO", "HEAT", "UNKNOWN"],
                 "icon": "mdi:cog"
             },
             {
