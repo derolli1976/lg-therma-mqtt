@@ -22,6 +22,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from wideq.core_async import ClientAsync
 from wideq.device import Device
+from wideq.devices.ac import ACMode
+from wideq.model_info import ModelInfo
 
 # Setup logging
 handlers = [logging.StreamHandler(sys.stdout)]
@@ -58,6 +60,7 @@ class MQTTPublisher:
     def __init__(self):
         self.lg_client: Optional[ClientAsync] = None
         self.device: Optional[Device] = None
+        self.model_info: Optional[ModelInfo] = None
         self.mqtt_client: Optional[mqtt.Client] = None
         self.running = True
         self.error_count = 0
@@ -133,6 +136,18 @@ class MQTTPublisher:
             # Update device name if available
             if self.device.name:
                 self.device_name = self.device.name
+            
+            # Load model_info to translate enum codes (e.g. opMode 3 -> HEAT)
+            try:
+                model_data = await self.lg_client.model_url_info(
+                    self.device.model_info_url
+                )
+                self.model_info = ModelInfo.get_model_info(model_data)
+                if self.model_info is None:
+                    logger.warning("Could not parse model_info; enum sensors may show raw values")
+            except Exception as e:
+                logger.warning(f"Failed to load model_info: {e}")
+                self.model_info = None
             
             return True
             
@@ -228,7 +243,7 @@ class MQTTPublisher:
                 "state_topic": state_topic,
                 "value_template": "{{ value_json.operation_mode }}",
                 "device_class": "enum",
-                "options": ["COOL", "DRY", "FAN", "AUTO", "HEAT", "UNKNOWN"],
+                "options": ["COOL", "DRY", "FAN", "HEAT", "ACO", "AI", "AIRCLEAN", "AROMA", "ENERGY_SAVING", "ENERGY_SAVER", "UNKNOWN"],
                 "icon": "mdi:cog"
             },
             {
@@ -442,6 +457,32 @@ class MQTTPublisher:
         self.discovery_sent = True
         return True
     
+    def _decode_op_mode(self, raw_value: Any) -> str:
+        """Convert raw airState.opMode value to ACMode enum name (e.g. 'HEAT').
+
+        The LG snapshot delivers opMode as a numeric code (e.g. 3.0). HA's
+        enum sensor expects one of the configured option strings.
+        """
+        if raw_value is None or raw_value == "":
+            return "UNKNOWN"
+        # Already a friendly string?
+        if isinstance(raw_value, str) and not raw_value.replace(".", "", 1).isdigit():
+            return raw_value
+        # Translate via model_info if available
+        if self.model_info is not None:
+            try:
+                code = str(int(float(raw_value)))
+                lang_key = self.model_info.enum_name("airState.opMode", code)
+                if lang_key:
+                    try:
+                        return ACMode(lang_key).name
+                    except ValueError:
+                        pass
+            except (ValueError, TypeError):
+                pass
+        logger.debug(f"Could not decode opMode value: {raw_value!r}")
+        return "UNKNOWN"
+
     async def collect_data(self) -> Optional[Dict[str, Any]]:
         """Collect data from LG device via direct device query.
         
@@ -473,7 +514,7 @@ class MQTTPublisher:
                 # System
                 "status": "Online" if is_online else "Offline",
                 "operation": snapshot.get("airState.operation", "UNKNOWN"),
-                "operation_mode": snapshot.get("airState.opMode", "UNKNOWN"),
+                "operation_mode": self._decode_op_mode(snapshot.get("airState.opMode")),
                 "diag_code": snapshot.get("airState.diagCode", "0000"),
                 
                 # Main Circuit (corrected keys from dashboard)
