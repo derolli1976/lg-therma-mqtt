@@ -21,9 +21,15 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from wideq.core_async import ClientAsync
+from wideq.core_exceptions import OfficialApiNudgeError
 from wideq.device import Device
 from wideq.devices.ac import ACMode
 from wideq.model_info import ModelInfo
+
+# Sentinel returned by collect_data when LG sent a transient "use the official
+# API" nudge (code 9006). The cycle should be skipped without counting as an
+# error or triggering a re-login.
+_SKIP = object()
 
 # Setup logging
 handlers = [logging.StreamHandler(sys.stdout)]
@@ -65,6 +71,7 @@ class MQTTPublisher:
         self.running = True
         self.error_count = 0
         self.max_errors = 5
+        self.nudge_count = 0
         self.discovery_sent = False
         self.connected = False
         
@@ -553,7 +560,14 @@ class MQTTPublisher:
                 data["cop"] = round(data["heat_output"] / data["power_consumption"], 2)
             
             return data
-            
+
+        except OfficialApiNudgeError as e:
+            # LG intermittently returns code 9006 ("Please consider using the
+            # official API") from the legacy ThinQ v2 endpoint. It is a transient
+            # nudge, not a session failure: the next poll usually succeeds and
+            # re-authenticating only adds login load. Skip this cycle quietly.
+            logger.warning(f"LG nudged us toward the official API (transient): {e}")
+            return _SKIP
         except Exception as e:
             logger.error(f"Failed to collect data: {e}")
             return None
@@ -604,7 +618,22 @@ class MQTTPublisher:
                     
                     # Collect data
                     data = await self.collect_data()
-                    
+
+                    if data is _SKIP:
+                        # LG asked us to back off (code 9006). Don't count it as
+                        # an error and don't re-login (that only adds load).
+                        # Wait progressively longer before the next attempt.
+                        self.nudge_count += 1
+                        backoff = min(self.interval * (2 ** self.nudge_count), 300)
+                        logger.info(
+                            f"Backing off {backoff}s after official-API nudge "
+                            f"(#{self.nudge_count})"
+                        )
+                        await asyncio.sleep(backoff)
+                        continue
+
+                    self.nudge_count = 0
+
                     if data:
                         # Publish to MQTT
                         if self.publish_state(data):

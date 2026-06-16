@@ -15,7 +15,8 @@ os.environ.update({
     "MQTT_BROKER": "localhost",
 })
 
-from mqtt_publisher import MQTTPublisher
+from mqtt_publisher import MQTTPublisher, _SKIP
+from wideq.core_exceptions import OfficialApiNudgeError
 
 
 @pytest.fixture
@@ -156,6 +157,23 @@ async def test_cop_zero_when_no_power(publisher):
 
     data = await publisher.collect_data()
     assert data["cop"] == 0.0
+
+
+@pytest.mark.asyncio
+async def test_collect_data_official_api_nudge_returns_skip(publisher):
+    """Code 9006 ('use the official API') is transient -> skip, not an error."""
+    session_mock = MagicMock()
+    session_mock.get_device_v2_settings = AsyncMock(
+        side_effect=OfficialApiNudgeError(
+            "Please consider using the official API.", "9006"
+        )
+    )
+
+    publisher.lg_client = MagicMock()
+    publisher.lg_client.session = session_mock
+
+    data = await publisher.collect_data()
+    assert data is _SKIP
 
 
 # --- MQTT Publish ---

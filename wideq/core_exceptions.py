@@ -29,6 +29,15 @@ class NotConnectedError(APIError):
     """The service can't contact the specified device."""
 
 
+class OfficialApiNudgeError(APIError):
+    """LG asks the client to switch to the official API (result code 9006).
+
+    Returned intermittently by the legacy ThinQ v1/v2 endpoints. It is a
+    transient nudge rather than a hard failure: the next request usually
+    succeeds and re-authenticating does not help.
+    """
+
+
 class FailedRequestError(APIError):
     """A failed request typically indicates an unsupported control on a device."""
 
