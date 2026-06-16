@@ -97,6 +97,10 @@ API2_ERRORS = {
     "0110": exc.InvalidCredentialError,
     "0111": exc.DelayedResponseError,
     9000: exc.InvalidRequestError,  # Surprisingly, an integer (not a string).
+    # "Please consider using the official API." A transient nudge from LG, not a
+    # session failure. The code may arrive as a string or (like 9000) an int.
+    "9006": exc.OfficialApiNudgeError,
+    9006: exc.OfficialApiNudgeError,
     "9995": exc.FailedRequestError,  # This come as "other errors", we manage as not FailedRequestError.
     "9999": exc.FailedRequestError,  # This come as "other errors", we manage as not FailedRequestError.
 }
