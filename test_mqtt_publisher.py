@@ -16,7 +16,8 @@ os.environ.update({
 })
 
 from mqtt_publisher import MQTTPublisher, _SKIP
-from wideq.core_exceptions import OfficialApiNudgeError
+from wideq.core_async import CoreAsync
+from wideq.core_exceptions import APIError, OfficialApiNudgeError
 
 
 @pytest.fixture
@@ -174,6 +175,61 @@ async def test_collect_data_official_api_nudge_returns_skip(publisher):
 
     data = await publisher.collect_data()
     assert data is _SKIP
+
+
+@pytest.mark.asyncio
+async def test_collect_data_generic_api_error_returns_none(publisher):
+    """An unknown/empty LG result code is a failed cycle -> None (not _SKIP)."""
+    session_mock = MagicMock()
+    session_mock.get_device_v2_settings = AsyncMock(
+        side_effect=APIError("ThinQ APIv2 error", "")
+    )
+
+    publisher.lg_client = MagicMock()
+    publisher.lg_client.session = session_mock
+
+    data = await publisher.collect_data()
+    assert data is None
+
+
+# --- API error payload plumbing (diagnostics) ---
+
+def test_manage_lge_result_attaches_payload_for_unknown_code():
+    result = {"resultCode": "1234", "result": ""}
+    with pytest.raises(APIError) as excinfo:
+        CoreAsync._manage_lge_result(result, is_api_v2=True)
+    assert excinfo.value.code == "1234"
+    assert excinfo.value.payload == result
+
+
+def test_manage_lge_result_maps_9006_with_payload():
+    result = {"resultCode": "9006", "result": "Please consider using the official API."}
+    with pytest.raises(OfficialApiNudgeError) as excinfo:
+        CoreAsync._manage_lge_result(result, is_api_v2=True)
+    assert excinfo.value.code == "9006"
+    assert excinfo.value.payload == result
+
+
+# --- Recovery backoff ---
+
+def test_backoff_escalates_and_caps(publisher):
+    publisher.interval = 30
+    publisher.max_backoff = 300
+
+    publisher.consecutive_failures = 1
+    assert publisher._backoff_seconds() == 60
+    publisher.consecutive_failures = 3
+    assert publisher._backoff_seconds() == 240
+    publisher.consecutive_failures = 10
+    assert publisher._backoff_seconds() == 300  # capped at max_backoff
+
+
+def test_backoff_exponent_is_bounded(publisher):
+    """A very long outage must not blow up into a runaway integer."""
+    publisher.interval = 30
+    publisher.max_backoff = 600
+    publisher.consecutive_failures = 100_000
+    assert publisher._backoff_seconds() == 600
 
 
 # --- MQTT Publish ---
