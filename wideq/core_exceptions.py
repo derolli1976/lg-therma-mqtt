@@ -4,9 +4,11 @@
 class APIError(Exception):
     """An error reported by the API."""
 
-    def __init__(self, message="LG ThinQ API Error", code=None):
+    def __init__(self, message="LG ThinQ API Error", code=None, payload=None):
         self.message = message
         self.code = code
+        # Raw response body from LG, attached for diagnostics when available.
+        self.payload = payload
         if code:
             msg = f"{code} - {message}"
         else:

@@ -416,9 +416,7 @@ class CoreAsync:
                 code = result["resultCode"]
                 if code != "0000":
                     message = result.get("result") or "ThinQ APIv2 error"
-                    if code in API2_ERRORS:
-                        raise API2_ERRORS[code](message)
-                    raise exc.APIError(message, code)
+                    raise CoreAsync._build_api_error(code, message, result)
 
             return result.get("result")
 
@@ -430,11 +428,26 @@ class CoreAsync:
             code = msg["returnCd"]
             if code != "0000":
                 message = msg.get("returnMsg") or "ThinQ APIv1 error"
-                if code in API2_ERRORS:
-                    raise API2_ERRORS[code](message)
-                raise exc.APIError(message, code)
+                raise CoreAsync._build_api_error(code, message, result)
 
         return msg
+
+    @staticmethod
+    def _build_api_error(code, message: str, payload: dict) -> exc.APIError:
+        """Build the right APIError subclass and attach the raw payload.
+
+        The raw `payload` is preserved on the exception for diagnostics:
+        several LG result codes (notably the bare "ThinQ APIv2 error" with an
+        empty/unknown resultCode) carry no useful message, so the only way to
+        learn what LG actually returned is to log the full body.
+        """
+        if code in API2_ERRORS:
+            err = API2_ERRORS[code](message)
+        else:
+            err = exc.APIError(message, code)
+        err.code = code
+        err.payload = payload
+        return err
 
     async def get_oauth_url(self):
         """Return url used for oauth2 authentication."""

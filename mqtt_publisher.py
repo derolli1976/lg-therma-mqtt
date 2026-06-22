@@ -21,7 +21,7 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from wideq.core_async import ClientAsync
-from wideq.core_exceptions import OfficialApiNudgeError
+from wideq.core_exceptions import APIError, OfficialApiNudgeError
 from wideq.device import Device
 from wideq.devices.ac import ACMode
 from wideq.model_info import ModelInfo
@@ -69,9 +69,10 @@ class MQTTPublisher:
         self.model_info: Optional[ModelInfo] = None
         self.mqtt_client: Optional[mqtt.Client] = None
         self.running = True
-        self.error_count = 0
-        self.max_errors = 5
-        self.nudge_count = 0
+        # Number of consecutive failed cycles (a nudge, a collection error or a
+        # failed MQTT publish). Drives the escalating backoff and the re-login
+        # cadence; reset to 0 after any fully successful cycle.
+        self.consecutive_failures = 0
         self.discovery_sent = False
         self.connected = False
         
@@ -89,6 +90,18 @@ class MQTTPublisher:
         self.mqtt_topic_prefix = os.getenv('MQTT_TOPIC_PREFIX', 'homeassistant')
         
         self.interval = int(os.getenv('INTERVAL', '30'))
+
+        # Recovery tuning. When a cycle fails we back off with an escalating
+        # delay (interval, 2x, 4x, ...) capped at MAX_BACKOFF, instead of
+        # hammering at the normal interval. LG throttles aggressive polling on
+        # the unofficial API; backing off *quietly* is what lets the rate
+        # window recover. A fresh login is only attempted after we have already
+        # backed off for RELOGIN_AFTER_FAILURES cycles, then retried every
+        # RELOGIN_EVERY_FAILURES cycles -- re-authenticating as an immediate
+        # burst does not clear the throttle and only keeps the window hot.
+        self.max_backoff = int(os.getenv('MAX_BACKOFF', '600'))
+        self.relogin_after = int(os.getenv('RELOGIN_AFTER_FAILURES', '3'))
+        self.relogin_every = int(os.getenv('RELOGIN_EVERY_FAILURES', '3'))
         
         # Device info
         self.device_name = "LG Therma V R290"
@@ -139,6 +152,18 @@ class MQTTPublisher:
                 )
             
             logger.info(f"Found device: {self.device.name} ({self.device.device_id})")
+
+            # Log the session identity so we can confirm, across reconnects,
+            # whether LG's throttle follows the session (client_id/token) or the
+            # account/IP. These rotate on every fresh login.
+            try:
+                logger.info(
+                    "Session identity: client_id=%s, user_number=%s",
+                    self.lg_client.client_id,
+                    self.lg_client.auth.user_number,
+                )
+            except Exception as e:
+                logger.debug(f"Could not read session identity: {e}")
             
             # Update device name if available
             if self.device.name:
@@ -563,11 +588,21 @@ class MQTTPublisher:
 
         except OfficialApiNudgeError as e:
             # LG intermittently returns code 9006 ("Please consider using the
-            # official API") from the legacy ThinQ v2 endpoint. It is a transient
-            # nudge, not a session failure: the next poll usually succeeds and
-            # re-authenticating only adds login load. Skip this cycle quietly.
-            logger.warning(f"LG nudged us toward the official API (transient): {e}")
+            # official API") from the legacy ThinQ v2 endpoint. Treat it as a
+            # failed cycle (the caller backs off); log the raw body so we can
+            # see exactly what LG sends when it throttles us.
+            logger.warning(f"LG nudged us toward the official API: {e}")
+            if e.payload is not None:
+                logger.warning(f"  9006 raw response: {e.payload}")
             return _SKIP
+        except APIError as e:
+            # Unknown / empty LG result codes surface here (e.g. the bare
+            # "ThinQ APIv2 error"). Log the code and full payload -- without it
+            # we are blind to what LG actually returns when polling degrades.
+            logger.error(f"Failed to collect data (APIError code={e.code}): {e}")
+            if e.payload is not None:
+                logger.error(f"  raw response: {e.payload}")
+            return None
         except Exception as e:
             logger.error(f"Failed to collect data: {e}")
             return None
@@ -594,79 +629,97 @@ class MQTTPublisher:
             logger.error(f"Failed to publish state: {e}")
             return False
     
+    def _backoff_seconds(self) -> int:
+        """Escalating backoff for failed cycles, capped at ``max_backoff``.
+
+        Grows as interval * 2**failures. The exponent is bounded so a very long
+        outage cannot produce a runaway integer; ``max_backoff`` caps the result
+        well before that anyway.
+        """
+        exponent = min(self.consecutive_failures, 16)
+        return min(self.interval * (2 ** exponent), self.max_backoff)
+
+    async def _relogin(self):
+        """Tear down the LG client and establish a fresh session."""
+        logger.info(
+            "Attempting a fresh LG login after cool-down "
+            f"(consecutive failures: {self.consecutive_failures})..."
+        )
+        if self.lg_client:
+            try:
+                await self.lg_client.close()
+            except Exception:
+                pass
+        try:
+            await self.initialize_lg()
+        except Exception as e:
+            logger.error(f"Re-login attempt failed: {e}")
+
     async def run(self):
         """Main loop"""
         logger.info("Starting LG Therma V MQTT Publisher...")
         logger.info(f"Publishing interval: {self.interval} seconds")
-        
+
         try:
             # Initialize LG connection
             await self.initialize_lg()
-            
+
             # Initialize MQTT connection
             self.initialize_mqtt()
-            
+
             # Send discovery messages
             self.publish_discovery()
-            
+
             # Main loop
             while self.running:
                 try:
                     # Re-send discovery if reconnected
                     if not self.discovery_sent and self.connected:
                         self.publish_discovery()
-                    
-                    # Collect data
+
+                    # Collect data and decide whether this cycle succeeded.
                     data = await self.collect_data()
 
                     if data is _SKIP:
-                        # LG asked us to back off (code 9006). Don't count it as
-                        # an error and don't re-login (that only adds load).
-                        # Wait progressively longer before the next attempt.
-                        self.nudge_count += 1
-                        backoff = min(self.interval * (2 ** self.nudge_count), 300)
-                        logger.info(
-                            f"Backing off {backoff}s after official-API nudge "
-                            f"(#{self.nudge_count})"
-                        )
-                        await asyncio.sleep(backoff)
+                        fail_reason = "official-API nudge (code 9006)"
+                    elif data is None:
+                        fail_reason = "collection error"
+                    elif self.publish_state(data):
+                        fail_reason = None
+                    else:
+                        fail_reason = "MQTT publish failed"
+
+                    if fail_reason is None:
+                        # Success: resume the normal cadence.
+                        self.consecutive_failures = 0
+                        await asyncio.sleep(self.interval)
                         continue
 
-                    self.nudge_count = 0
+                    # Failed cycle: back off quietly instead of hammering. A
+                    # short burst of retries is exactly what keeps LG's rate
+                    # window hot, so we never poll faster than the backoff.
+                    self.consecutive_failures += 1
 
-                    if data:
-                        # Publish to MQTT
-                        if self.publish_state(data):
-                            self.error_count = 0
-                        else:
-                            self.error_count += 1
-                    else:
-                        self.error_count += 1
-                    
-                    # Check error threshold
-                    if self.error_count >= self.max_errors:
-                        logger.error(f"Too many errors ({self.error_count}), reconnecting...")
-                        
-                        # Close old session to prevent resource leaks
-                        if self.lg_client:
-                            try:
-                                await self.lg_client.close()
-                            except Exception:
-                                pass
-                        
-                        # Reconnect LG
-                        await self.initialize_lg()
-                        
-                        # MQTT client reconnects automatically
-                        self.error_count = 0
-                    
-                    # Wait for next interval
-                    await asyncio.sleep(self.interval)
-                    
+                    # Re-login only after we have already backed off for a while
+                    # (a real quiet pause), then retry it periodically. This
+                    # mirrors what a container restart does -- which is the only
+                    # thing observed to recover the connection.
+                    if (self.consecutive_failures >= self.relogin_after and
+                            (self.consecutive_failures - self.relogin_after)
+                            % self.relogin_every == 0):
+                        await self._relogin()
+
+                    backoff = self._backoff_seconds()
+                    logger.warning(
+                        f"Cycle failed ({fail_reason}); backing off {backoff}s "
+                        f"(consecutive failures: {self.consecutive_failures})"
+                    )
+                    await asyncio.sleep(backoff)
+
                 except Exception as e:
                     logger.error(f"Error in main loop: {e}")
-                    self.error_count += 1
-                    await asyncio.sleep(5)
+                    self.consecutive_failures += 1
+                    await asyncio.sleep(self._backoff_seconds())
             
         except Exception as e:
             logger.error(f"Fatal error: {e}")
