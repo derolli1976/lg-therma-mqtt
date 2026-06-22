@@ -32,8 +32,7 @@ services:
 
       # Recovery tuning (optional; defaults shown)
       - MAX_BACKOFF=${MAX_BACKOFF:-600}
-      - RELOGIN_AFTER_FAILURES=${RELOGIN_AFTER_FAILURES:-3}
-      - RELOGIN_EVERY_FAILURES=${RELOGIN_EVERY_FAILURES:-3}
+      - EXIT_AFTER_FAILURES=${EXIT_AFTER_FAILURES:-4}
 
     volumes:
       - ./logs:/app/logs:rw

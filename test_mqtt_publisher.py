@@ -232,6 +232,11 @@ def test_backoff_exponent_is_bounded(publisher):
     assert publisher._backoff_seconds() == 600
 
 
+def test_recovery_defaults(publisher):
+    assert publisher.max_backoff == 600
+    assert publisher.exit_after == 4
+
+
 # --- MQTT Publish ---
 
 def test_publish_state_not_connected(publisher):

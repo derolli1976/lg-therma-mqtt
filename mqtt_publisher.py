@@ -5,6 +5,7 @@ und veröffentlicht sie via MQTT mit Home Assistant Auto-Discovery.
 """
 
 import asyncio
+import hashlib
 import os
 import sys
 import logging
@@ -95,13 +96,13 @@ class MQTTPublisher:
         # delay (interval, 2x, 4x, ...) capped at MAX_BACKOFF, instead of
         # hammering at the normal interval. LG throttles aggressive polling on
         # the unofficial API; backing off *quietly* is what lets the rate
-        # window recover. A fresh login is only attempted after we have already
-        # backed off for RELOGIN_AFTER_FAILURES cycles, then retried every
-        # RELOGIN_EVERY_FAILURES cycles -- re-authenticating as an immediate
-        # burst does not clear the throttle and only keeps the window hot.
+        # window recover.
         self.max_backoff = int(os.getenv('MAX_BACKOFF', '600'))
-        self.relogin_after = int(os.getenv('RELOGIN_AFTER_FAILURES', '3'))
-        self.relogin_every = int(os.getenv('RELOGIN_EVERY_FAILURES', '3'))
+        # A fresh in-process login does not clear LG's account/IP throttle;
+        # only a full process restart does (confirmed via logs). After this many
+        # consecutive failures we exit so the container restart policy brings us
+        # back fresh. 0 disables (keep backing off in place forever).
+        self.exit_after = int(os.getenv('EXIT_AFTER_FAILURES', '4'))
         
         # Device info
         self.device_name = "LG Therma V R290"
@@ -154,13 +155,18 @@ class MQTTPublisher:
             logger.info(f"Found device: {self.device.name} ({self.device.device_id})")
 
             # Log the session identity so we can confirm, across reconnects,
-            # whether LG's throttle follows the session (client_id/token) or the
-            # account/IP. These rotate on every fresh login.
+            # whether LG's throttle follows the session or the account/IP. The
+            # client_id is locally generated and rotates every login; the token
+            # fingerprint reveals whether LG actually issues a *new* token on a
+            # fresh login or hands back the same (possibly throttled) one.
             try:
+                refresh_token = self.lg_client.auth.refresh_token or ""
+                token_fp = hashlib.sha256(refresh_token.encode()).hexdigest()[:12]
                 logger.info(
-                    "Session identity: client_id=%s, user_number=%s",
+                    "Session identity: client_id=%s, user_number=%s, token_fp=%s",
                     self.lg_client.client_id,
                     self.lg_client.auth.user_number,
+                    token_fp,
                 )
             except Exception as e:
                 logger.debug(f"Could not read session identity: {e}")
@@ -639,22 +645,6 @@ class MQTTPublisher:
         exponent = min(self.consecutive_failures, 16)
         return min(self.interval * (2 ** exponent), self.max_backoff)
 
-    async def _relogin(self):
-        """Tear down the LG client and establish a fresh session."""
-        logger.info(
-            "Attempting a fresh LG login after cool-down "
-            f"(consecutive failures: {self.consecutive_failures})..."
-        )
-        if self.lg_client:
-            try:
-                await self.lg_client.close()
-            except Exception:
-                pass
-        try:
-            await self.initialize_lg()
-        except Exception as e:
-            logger.error(f"Re-login attempt failed: {e}")
-
     async def run(self):
         """Main loop"""
         logger.info("Starting LG Therma V MQTT Publisher...")
@@ -699,22 +689,30 @@ class MQTTPublisher:
                     # short burst of retries is exactly what keeps LG's rate
                     # window hot, so we never poll faster than the backoff.
                     self.consecutive_failures += 1
-
-                    # Re-login only after we have already backed off for a while
-                    # (a real quiet pause), then retry it periodically. This
-                    # mirrors what a container restart does -- which is the only
-                    # thing observed to recover the connection.
-                    if (self.consecutive_failures >= self.relogin_after and
-                            (self.consecutive_failures - self.relogin_after)
-                            % self.relogin_every == 0):
-                        await self._relogin()
-
                     backoff = self._backoff_seconds()
                     logger.warning(
                         f"Cycle failed ({fail_reason}); backing off {backoff}s "
                         f"(consecutive failures: {self.consecutive_failures})"
                     )
                     await asyncio.sleep(backoff)
+
+                    # A fresh in-process login does NOT clear LG's throttle:
+                    # logs confirm the client_id rotates on every login yet the
+                    # 9006 nudge persists across a re-login, so the throttle is
+                    # keyed to the account/IP, not the session. The only
+                    # recovery observed to work is a full process restart. So
+                    # once we are clearly stuck, exit and let the container
+                    # restart policy (restart: unless-stopped) bring us back
+                    # fresh -- the backoff above is the quiet pause LG needs
+                    # before the new start. Set EXIT_AFTER_FAILURES=0 to disable
+                    # (e.g. when not running under a restart policy).
+                    if self.exit_after and self.consecutive_failures >= self.exit_after:
+                        logger.error(
+                            f"Throttle persists after {self.consecutive_failures} "
+                            "failed cycles; exiting for a clean restart "
+                            "(requires a container restart policy)."
+                        )
+                        sys.exit(1)
 
                 except Exception as e:
                     logger.error(f"Error in main loop: {e}")
