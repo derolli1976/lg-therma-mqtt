@@ -20,11 +20,19 @@ ENV/
 logs/
 *.log
 
+# Official LG ThinQ API diagnostics (local-only; dump may contain account data)
+thinq_official_dump.json
+tools/thinq_official_dump.py
+openapi.json
+
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+
+# Claude Code (local settings/state)
+.claude/
 
 # OS
 .DS_Store

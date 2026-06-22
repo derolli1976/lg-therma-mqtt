@@ -202,11 +202,13 @@ def test_manage_lge_result_attaches_payload_for_unknown_code():
     assert excinfo.value.payload == result
 
 
-def test_manage_lge_result_maps_9006_with_payload():
-    result = {"resultCode": "9006", "result": "Please consider using the official API."}
+@pytest.mark.parametrize("code", ["9006", "9012"])
+def test_manage_lge_result_maps_official_api_nudge_codes(code):
+    """LG uses both 9006 and 9012 as 'use the official API' nudges."""
+    result = {"resultCode": code, "result": "Please consider using the official API."}
     with pytest.raises(OfficialApiNudgeError) as excinfo:
         CoreAsync._manage_lge_result(result, is_api_v2=True)
-    assert excinfo.value.code == "9006"
+    assert excinfo.value.code == code
     assert excinfo.value.payload == result
 
 
