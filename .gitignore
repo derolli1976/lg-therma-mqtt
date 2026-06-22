@@ -31,6 +31,9 @@ openapi.json
 *.swp
 *.swo
 
+# Claude Code (local settings/state)
+.claude/
+
 # OS
 .DS_Store
 Thumbs.db
