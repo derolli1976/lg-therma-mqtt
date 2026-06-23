@@ -530,6 +530,18 @@ class MQTTPublisher:
         infrequently unless triggered by an app or direct query).
         """
         try:
+            # Proactively refresh the OAuth access token before it expires.
+            # The token is valid for ~3600s, but this poll path queries the
+            # device directly and never goes through wideq's monitor refresh,
+            # so without this the token silently expires after ~1h and LG starts
+            # returning resultCode 0102 (NotLoggedInError) -- the recurring
+            # "ThinQ APIv2 error" stall whose good windows are ~60 min long.
+            # refresh_auth() is cheap: wideq only performs a network call
+            # (grant_type=refresh_token, same client_id) within 60s of expiry,
+            # otherwise it is a no-op. Keeping the same session also avoids the
+            # hourly full re-login that appears to trip LG's account/IP throttle.
+            await self.lg_client.refresh_auth()
+
             # Query device directly for fresh data (like the ThinQ app does)
             result = await self.lg_client.session.get_device_v2_settings(self.device_id)
             snapshot = result.get('snapshot', {})
