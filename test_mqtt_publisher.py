@@ -109,6 +109,7 @@ async def test_collect_data_mapping(publisher):
 
     publisher.lg_client = MagicMock()
     publisher.lg_client.session = session_mock
+    publisher.lg_client.refresh_auth = AsyncMock()
     publisher.lg_client.get_device.return_value = device_info
 
     data = await publisher.collect_data()
@@ -134,6 +135,7 @@ async def test_cop_calculation(publisher):
 
     publisher.lg_client = MagicMock()
     publisher.lg_client.session = session_mock
+    publisher.lg_client.refresh_auth = AsyncMock()
     publisher.lg_client.get_device.return_value = device_info
 
     data = await publisher.collect_data()
@@ -154,6 +156,7 @@ async def test_cop_zero_when_no_power(publisher):
 
     publisher.lg_client = MagicMock()
     publisher.lg_client.session = session_mock
+    publisher.lg_client.refresh_auth = AsyncMock()
     publisher.lg_client.get_device.return_value = device_info
 
     data = await publisher.collect_data()
@@ -172,6 +175,7 @@ async def test_collect_data_official_api_nudge_returns_skip(publisher):
 
     publisher.lg_client = MagicMock()
     publisher.lg_client.session = session_mock
+    publisher.lg_client.refresh_auth = AsyncMock()
 
     data = await publisher.collect_data()
     assert data is _SKIP
@@ -187,9 +191,53 @@ async def test_collect_data_generic_api_error_returns_none(publisher):
 
     publisher.lg_client = MagicMock()
     publisher.lg_client.session = session_mock
+    publisher.lg_client.refresh_auth = AsyncMock()
 
     data = await publisher.collect_data()
     assert data is None
+
+
+@pytest.mark.asyncio
+async def test_collect_data_refreshes_token_before_query(publisher):
+    """The token is refreshed (cheap no-op unless near expiry) every cycle,
+    before the device query, so the access token never silently expires into
+    the recurring 0102 / 'ThinQ APIv2 error' stall."""
+    device_info = MagicMock()
+    device_info.isonline = True
+
+    session_mock = MagicMock()
+    session_mock.get_device_v2_settings = AsyncMock(return_value={"snapshot": SAMPLE_SNAPSHOT})
+
+    publisher.lg_client = MagicMock()
+    publisher.lg_client.session = session_mock
+    publisher.lg_client.refresh_auth = AsyncMock()
+    publisher.lg_client.get_device.return_value = device_info
+
+    data = await publisher.collect_data()
+
+    publisher.lg_client.refresh_auth.assert_awaited_once()
+    assert data["status"] == "Online"
+
+
+@pytest.mark.asyncio
+async def test_collect_data_refresh_nudge_returns_skip(publisher):
+    """If LG throttles the token refresh itself (9006), treat the cycle as a
+    skip just like a throttled query -- not a hard error."""
+    session_mock = MagicMock()
+    session_mock.get_device_v2_settings = AsyncMock(return_value={"snapshot": SAMPLE_SNAPSHOT})
+
+    publisher.lg_client = MagicMock()
+    publisher.lg_client.session = session_mock
+    publisher.lg_client.refresh_auth = AsyncMock(
+        side_effect=OfficialApiNudgeError(
+            "Please consider using the official API.", "9006"
+        )
+    )
+
+    data = await publisher.collect_data()
+
+    assert data is _SKIP
+    session_mock.get_device_v2_settings.assert_not_awaited()
 
 
 # --- API error payload plumbing (diagnostics) ---
