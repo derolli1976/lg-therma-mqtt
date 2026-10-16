@@ -166,8 +166,10 @@ entities:
 
 | Variable | Pflicht | Standard | Beschreibung |
 |----------|---------|----------|-------------|
-| `LG_EMAIL` | Ja | - | LG ThinQ Account E-Mail |
-| `LG_PASSWORD` | Ja | - | LG ThinQ Account Passwort |
+| `LG_EMAIL` | Ja* | - | LG ThinQ Account E-Mail |
+| `LG_PASSWORD` | Ja* | - | LG ThinQ Account Passwort |
+| `LG_REFRESH_TOKEN` | Nein | - | Refresh-Token aus dem Browser-Login; ersetzt E-Mail/Passwort (*) |
+| `LG_OAUTH_URL` | Nein | - | `oauth2_backend_url` aus dem Browser-Login (z. B. `https://gb.lgeapi.com/`) |
 | `DEVICE_ID` | Ja | - | Geräte-ID der Wärmepumpe |
 | `LG_COUNTRY` | Nein | `DE` | Ländercode |
 | `LG_LANGUAGE` | Nein | `de-DE` | Sprachcode |
@@ -177,6 +179,27 @@ entities:
 | `MQTT_PASSWORD` | Nein | - | MQTT Passwort |
 | `MQTT_TOPIC_PREFIX` | Nein | `homeassistant` | MQTT Topic Prefix |
 | `INTERVAL` | Nein | `30` | Abfrageintervall in Sekunden |
+
+\* Nur nötig, wenn `LG_REFRESH_TOKEN` nicht gesetzt ist.
+
+### Login per Refresh-Token
+
+LG hat im Oktober 2026 den `searchKey`-Endpoint entfernt. Der Passwort-Login
+schlägt seitdem mit `User login failed` fehl (siehe
+[ollo69/ha-smartthinq-sensors#1016](https://github.com/ollo69/ha-smartthinq-sensors/issues/1016)).
+Der Browser-Login funktioniert weiterhin und liefert einen Refresh-Token:
+
+```bash
+python tools/lg_token_login.py
+```
+
+1. Die ausgegebene URL im Browser öffnen und anmelden.
+2. Die Zielseite meldet evtl. „Seite nicht gefunden“. Das ist egal: Die komplette
+   URL aus der Adressleiste (enthält `refresh_token=`) in das Skript einfügen.
+3. Die ausgegebenen Zeilen `LG_REFRESH_TOKEN=…` und `LG_OAUTH_URL=…` in die `.env`
+   übernehmen und den Container neu starten.
+
+Der Token bleibt gültig, solange er nicht durch Passwortänderung o. Ä. widerrufen wird.
 
 ## Ohne Docker ausführen
 

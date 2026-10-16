@@ -80,6 +80,11 @@ class MQTTPublisher:
         # Environment variables
         self.lg_email = os.getenv('LG_EMAIL')
         self.lg_password = os.getenv('LG_PASSWORD')
+        # Alternative zum Passwort-Login: refresh_token aus dem Browser-Login
+        # (LG hat 10/2026 den searchKey-Endpoint entfernt, Passwort-Login ist
+        # seitdem kaputt – siehe ollo69/ha-smartthinq-sensors#1016).
+        self.lg_refresh_token = os.getenv('LG_REFRESH_TOKEN', '').strip()
+        self.lg_oauth_url = os.getenv('LG_OAUTH_URL', '').strip() or None
         self.lg_country = os.getenv('LG_COUNTRY', 'DE')
         self.lg_language = os.getenv('LG_LANGUAGE', 'de-DE')
         self.device_id = os.getenv('DEVICE_ID')
@@ -117,12 +122,13 @@ class MQTTPublisher:
     def _validate_environment(self):
         """Validate all required environment variables are set"""
         required_vars = {
-            'LG_EMAIL': self.lg_email,
-            'LG_PASSWORD': self.lg_password,
             'DEVICE_ID': self.device_id,
             'MQTT_BROKER': self.mqtt_broker
         }
-        
+        if not self.lg_refresh_token:
+            required_vars['LG_EMAIL'] = self.lg_email
+            required_vars['LG_PASSWORD'] = self.lg_password
+
         missing = [var for var, value in required_vars.items() if not value]
         if missing:
             raise ValueError(f"Missing required environment variables: {', '.join(missing)}")
@@ -132,14 +138,22 @@ class MQTTPublisher:
         logger.info("Initializing LG ThinQ connection...")
         
         try:
-            # Login to LG ThinQ (use keyword arguments)
-            self.lg_client = await ClientAsync.from_user_login(
-                username=self.lg_email,
-                password=self.lg_password,
-                country=self.lg_country,
-                language=self.lg_language
-            )
-            logger.info("Successfully logged in to LG ThinQ")
+            if self.lg_refresh_token:
+                self.lg_client = await ClientAsync.from_token(
+                    self.lg_refresh_token,
+                    country=self.lg_country,
+                    language=self.lg_language,
+                    oauth_url=self.lg_oauth_url,
+                )
+                logger.info("Successfully logged in to LG ThinQ (refresh token)")
+            else:
+                self.lg_client = await ClientAsync.from_user_login(
+                    username=self.lg_email,
+                    password=self.lg_password,
+                    country=self.lg_country,
+                    language=self.lg_language
+                )
+                logger.info("Successfully logged in to LG ThinQ")
             
             # Find device
             devices = self.lg_client.devices

@@ -16,6 +16,8 @@ services:
       # LG ThinQ Credentials
       - LG_EMAIL=${LG_EMAIL}
       - LG_PASSWORD=${LG_PASSWORD}
+      - LG_REFRESH_TOKEN=${LG_REFRESH_TOKEN:-}
+      - LG_OAUTH_URL=${LG_OAUTH_URL:-}
       - LG_COUNTRY=${LG_COUNTRY:-DE}
       - LG_LANGUAGE=${LG_LANGUAGE:-de-DE}
       - DEVICE_ID=${DEVICE_ID}
