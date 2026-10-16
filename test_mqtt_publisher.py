@@ -33,6 +33,33 @@ def test_missing_env_raises():
             MQTTPublisher()
 
 
+def test_refresh_token_makes_password_optional():
+    with patch.dict(os.environ, {"LG_EMAIL": "", "LG_PASSWORD": "",
+                                 "LG_REFRESH_TOKEN": "rt"}, clear=False):
+        p = MQTTPublisher()
+    assert p.lg_refresh_token == "rt"
+
+
+@pytest.mark.asyncio
+async def test_initialize_lg_uses_refresh_token():
+    with patch.dict(os.environ, {"LG_REFRESH_TOKEN": "rt",
+                                 "LG_OAUTH_URL": "https://gb.lgeapi.com/"}, clear=False):
+        p = MQTTPublisher()
+    device = MagicMock(device_id="abcdef1234567890")
+    device.name = "WP"
+    client = MagicMock(devices=[device])
+    client.model_url_info = AsyncMock(return_value={})
+    with patch("mqtt_publisher.ClientAsync.from_token",
+               AsyncMock(return_value=client)) as from_token, \
+         patch("mqtt_publisher.ClientAsync.from_user_login", AsyncMock()) as from_login:
+        await p.initialize_lg()
+    from_token.assert_awaited_once()
+    assert from_token.await_args.args == ("rt",)
+    assert from_token.await_args.kwargs["oauth_url"] == "https://gb.lgeapi.com/"
+    from_login.assert_not_awaited()
+    assert p.device is device
+
+
 def test_defaults(publisher):
     assert publisher.lg_country == "DE"
     assert publisher.lg_language == "de-DE"

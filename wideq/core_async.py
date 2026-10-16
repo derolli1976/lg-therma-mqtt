@@ -634,15 +634,22 @@ class CoreAsync:
             login_base_url, "searchKey?key_name=OAUTH_SECRETKEY&sever_type=OP"
         )
 
-        async with self._get_session().get(
-            url=emp_search_key_url, timeout=self._timeout, raise_for_status=False
-        ) as resp:
-            secret_data = json.loads(
-                await resp.text()
-            )  # this return data as plain/text
-
-        _LOGGER.debug("auth_user_login - secret_data: %s", secret_data)
-        secret_key = secret_data["returnData"]
+        # LG has removed the searchKey endpoint (404 HTML since 10/2026);
+        # in that case fall back to the known static key.
+        secret_key = OAUTH_SECRET_KEY
+        try:
+            async with self._get_session().get(
+                url=emp_search_key_url, timeout=self._timeout, raise_for_status=False
+            ) as resp:
+                secret_data = json.loads(
+                    await resp.text()
+                )  # this return data as plain/text
+            _LOGGER.debug("auth_user_login - secret_data: %s", secret_data)
+            secret_key = secret_data["returnData"]
+        except (ValueError, KeyError, TypeError) as ex:
+            _LOGGER.debug(
+                "auth_user_login - searchKey unavailable (%s), using static key", ex
+            )
 
         # get token data
         emp_data = {
@@ -855,9 +862,9 @@ class Gateway:
                 fragment=None,
             )
         )
-        url_netloc = OAUTH_LOGIN_HOST
-        if url_base_parsed.port:
-            url_netloc += f":{url_base_parsed.port}"
+        # Use the account's regional login host (e.g. de.m.lgaccount.com);
+        # the US host rejects non-US accounts (upstream issue #1016).
+        url_netloc = url_base_parsed.netloc or OAUTH_LOGIN_HOST
 
         redir_param = "callback_url" if use_oauth2 else "redirect_uri"
         state_param = "oauth2State" if use_oauth2 else "state"
